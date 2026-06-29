@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Soundness of integer-divide fold</title>
+    <style>
+      /* Alignment */
+      mtable.right-align mtd,
+      mtable mtd.right-align,
+      mtable.left-align mtd.right-align,
+      mtable.aligned mtd:nth-child(odd) {
+        justify-items: end;
+        text-align: right;
+      }
+      mtable.cases mtd,
+      mtable.left-align mtd,
+      mtable mtd.left-align,
+      mtable.aligned mtd:nth-child(even),
+      math:is(:not([display])) > mtable.multiline-equation mtd {
+        justify-items: start;
+        text-align: left;
+      }
+      mtable.cases mtd,
+      mtable.aligned mtd,
+      mtable mtd.flushed,
+      mtable mtd.left-flush {
+        padding-left: 0;
+      }
+      mtable.cases mtd,
+      mtable.aligned mtd,
+      mtable mtd.flushed,
+      mtable mtd.right-flush {
+        padding-right: 0;
+      }
+      
+      /* Tables */
+      mtable {
+        math-style: inherit;
+      }
+      mtd {
+        math-depth: auto-add;
+        math-style: compact;
+        math-shift: compact;
+      }
+      
+      /* Equations */
+      mtable.multiline-equation mtd {
+        math-depth: inherit;
+        math-style: inherit;
+        math-shift: inherit;
+        padding: 0;
+      }
+      math > mtable.multiline-equation mtr:not(:last-child) mtd {
+        padding-bottom: 0.5em;
+      }
+      
+      /* Fractions */
+      mfrac {
+        padding-inline: 0;
+        margin-inline: 0.1em;
+      }
+      
+      /* Accents */
+      mover[accent="true" i] > :first-child {
+        font-feature-settings: "dtls";
+      }
+      mover.dotted[accent="true" i] > :first-child {
+        font-feature-settings: "dtls" 0;
+      }
+      
+      /* Other rules for scriptlevel, displaystyle and math-shift */
+      munder > :nth-child(2),
+      munderover > :nth-child(2) {
+        math-shift: compact
+      }
+      munder[accentunder="true" i] > :not(:first-child),
+      mover[accent="true" i] > :not(:first-child) {
+        math-depth: inherit;
+        math-style: inherit;
+        math-shift: inherit;
+      }
+    </style>
+  </head>
+  <body>
+    <h2>Soundness of <code>fdiv</code>/<code>fptoi</code> to integer division</h2>
+    <p>Consider the LLVM fold, lane-wise for vectors,</p>
+    <pre><code data-lang="llvm">fpto[u/s]i (<span style="color: #d73948">fdiv</span> ([u/s]itofp X <span style="color: #d73948">to</span> F), C_fp) <span style="color: #d73948">to</span> iN
+  --> [u/s]div iN X, C</code></pre>
+    <p>where <code>F</code> is a binary floating-point type with precision <math><mi>𝑝</mi></math> significand bits (including the hidden bit), and <code>C_fp</code> is exactly the FP value of the integer constant <code>C</code>.</p>
+    <h3>Conditions</h3>
+    <p>For the unsigned form:</p>
+    <ul>
+      <li><math><mi>𝐶</mi><mo>></mo><mn>0</mn></math>.</li>
+      <li><math><mi>𝑁</mi><mo>≤</mo><mi>𝑝</mi></math>.</li>
+    </ul>
+    <p>For the signed form:</p>
+    <ul>
+      <li><math><mi>𝐶</mi><mo>≠</mo><mn>0</mn></math>.</li>
+      <li><math><mi>𝑁</mi><mo>−</mo><mn>1</mn><mo>≤</mo><mi>𝑝</mi></math>.</li>
+      <li>If <math><mi>𝐶</mi><mo>=</mo><mo form="prefix">−</mo><mn>1</mn></math>, the fold to <code>sdiv</code> is sound only when <math><mi>𝑋</mi><mo>≠</mo><mtext>INT_MIN</mtext></math> is known. Otherwise <code>sdiv INT_MIN, -1</code> is immediate undefined behavior, while the FP path only produces poison at <code>fptosi</code>.</li>
+    </ul>
+    <p>Equivalently, the signed constant cases are:</p>
+    <pre><code data-lang="text">C > 0   : sound if N - 1 &lt;= p
+C &lt; -1  : sound if N - 1 &lt;= p
+C == -1 : sound only if X != INT_MIN is known
+C == 0  : not sound as division</code></pre>
+    <p>The precision bounds ensure that the integer inputs to the FP division are exact: all integers with magnitude at most <math><msup><mn>2</mn><mi>𝑝</mi></msup></math> are exactly representable.</p>
+    <h3>Rounding lemma</h3>
+    <p>Let <math><msub><mi>𝑅</mi><mi>𝑝</mi></msub></math> be round-to-nearest-even to precision <math><mi>𝑝</mi></math>. If <math><mn>0</mn><mo>≤</mo><mi>𝐴</mi><mo>≤</mo><msup><mn>2</mn><mi>𝑝</mi></msup></math>, <math><mn>1</mn><mo>≤</mo><mi>𝐵</mi><mo>≤</mo><msup><mn>2</mn><mi>𝑝</mi></msup></math>, and <math><mi>𝑞</mi><mo>=</mo><mtext>floor</mtext><mrow><mo>(</mo><mfrac><mi>𝐴</mi><mi>𝐵</mi></mfrac><mo>)</mo></mrow></math>, then</p>
+    <math display="block">
+      <mtext>trunc</mtext>
+      <mrow>
+        <mo>(</mo>
+        <mrow>
+          <msub>
+            <mi>𝑅</mi>
+            <mi>𝑝</mi>
+          </msub>
+          <mrow>
+            <mo>(</mo>
+            <mfrac>
+              <mi>𝐴</mi>
+              <mi>𝐵</mi>
+            </mfrac>
+            <mo>)</mo>
+          </mrow>
+        </mrow>
+        <mo>)</mo>
+      </mrow>
+      <mo>=</mo>
+      <mi>𝑞</mi>
+      <mi>.</mi>
+    </math>
+    <p>Proof. Write <math><mi>𝐴</mi><mo>=</mo><mi>𝑞</mi><mi>𝐵</mi><mo>+</mo><mi>𝑟</mi></math>, where <math><mn>0</mn><mo>≤</mo><mi>𝑟</mi><mo>&lt;</mo><mi>𝐵</mi></math>. If <math><mi>𝑟</mi><mo>=</mo><mn>0</mn></math>, then <math><mfrac><mi>𝐴</mi><mi>𝐵</mi></mfrac><mo>=</mo><mi>𝑞</mi></math> exactly, and <math><mi>𝑞</mi><mo>≤</mo><msup><mn>2</mn><mi>𝑝</mi></msup></math>, so rounding preserves it.</p>
+    <p>Assume <math><mi>𝑟</mi><mo>></mo><mn>0</mn></math> and let <math><mi>𝑚</mi><mo>=</mo><mi>𝑞</mi><mo>+</mo><mn>1</mn></math>. The quotient lies in <math><mrow><mo>[</mo><mrow><mi>𝑞</mi><mo>,</mo><mi>𝑚</mi></mrow><mo>)</mo></mrow></math>, so it cannot round below <math><mi>𝑞</mi></math>. It remains to show it cannot round up to <math><mi>𝑚</mi></math>. Let <math><mi>𝐻</mi><mrow><mo>(</mo><mi>𝑚</mi><mo>)</mo></mrow></math> be half the gap from <math><mi>𝑚</mi></math> to the previous representable FP number. For <math><mi>𝑞</mi><mo>></mo><mn>0</mn></math>,</p>
+    <math display="block">
+      <mi>𝐻</mi>
+      <mrow>
+        <mo>(</mo>
+        <mi>𝑚</mi>
+        <mo>)</mo>
+      </mrow>
+      <mo>≤</mo>
+      <mfrac>
+        <mi>𝑞</mi>
+        <msup>
+          <mn>2</mn>
+          <mi>𝑝</mi>
+        </msup>
+      </mfrac>
+      <mi>.</mi>
+    </math>
+    <p>Since <math><mi>𝑞</mi><mi>𝐵</mi><mo>&lt;</mo><mi>𝐴</mi><mo>≤</mo><msup><mn>2</mn><mi>𝑝</mi></msup></math>, we have <math><mi>𝐵</mi><mo>&lt;</mo><mfrac><msup><mn>2</mn><mi>𝑝</mi></msup><mi>𝑞</mi></mfrac></math>, hence</p>
+    <math display="block">
+      <mfrac>
+        <mn>1</mn>
+        <mi>𝐵</mi>
+      </mfrac>
+      <mo>></mo>
+      <mfrac>
+        <mi>𝑞</mi>
+        <msup>
+          <mn>2</mn>
+          <mi>𝑝</mi>
+        </msup>
+      </mfrac>
+      <mo>≥</mo>
+      <mi>𝐻</mi>
+      <mrow>
+        <mo>(</mo>
+        <mi>𝑚</mi>
+        <mo>)</mo>
+      </mrow>
+      <mi>.</mi>
+    </math>
+    <p>Also,</p>
+    <math display="block">
+      <mi>𝑚</mi>
+      <mo>−</mo>
+      <mfrac>
+        <mi>𝐴</mi>
+        <mi>𝐵</mi>
+      </mfrac>
+      <mo>=</mo>
+      <mfrac>
+        <mrow>
+          <mi>𝐵</mi>
+          <mo>−</mo>
+          <mi>𝑟</mi>
+        </mrow>
+        <mi>𝐵</mi>
+      </mfrac>
+      <mo>≥</mo>
+      <mfrac>
+        <mn>1</mn>
+        <mi>𝐵</mi>
+      </mfrac>
+      <mo>></mo>
+      <mi>𝐻</mi>
+      <mrow>
+        <mo>(</mo>
+        <mi>𝑚</mi>
+        <mo>)</mo>
+      </mrow>
+      <mi>.</mi>
+    </math>
+    <p>Thus <math><mfrac><mi>𝐴</mi><mi>𝐵</mi></mfrac></math> is strictly below the rounding threshold for <math><mi>𝑚</mi></math>, so <math><msub><mi>𝑅</mi><mi>𝑝</mi></msub><mrow><mo>(</mo><mfrac><mi>𝐴</mi><mi>𝐵</mi></mfrac><mo>)</mo></mrow><mo>&lt;</mo><mi>𝑚</mi><mo>=</mo><mi>𝑞</mi><mo>+</mo><mn>1</mn></math>, and truncation gives <math><mi>𝑞</mi></math>.</p>
+    <p>If <math><mi>𝑞</mi><mo>=</mo><mn>0</mn></math>, then <math><mi>𝑚</mi><mo>=</mo><mn>1</mn></math> and <math><mi>𝐻</mi><mrow><mo>(</mo><mn>1</mn><mo>)</mo></mrow><mo>=</mo><msup><mn>2</mn><mrow><mo>−</mo><mi>𝑝</mi><mo lspace="0em" rspace="0em">−</mo><mn>1</mn></mrow></msup></math>, while <math><mi>𝐵</mi><mo>≤</mo><msup><mn>2</mn><mi>𝑝</mi></msup></math> gives <math><mfrac><mn>1</mn><mi>𝐵</mi></mfrac><mo>≥</mo><msup><mn>2</mn><mrow><mo>−</mo><mi>𝑝</mi></mrow></msup><mo>></mo><mi>𝐻</mi><mrow><mo>(</mo><mn>1</mn><mo>)</mo></mrow></math>, so the same conclusion holds.</p>
+    <h3>Signed case</h3>
+    <p>Let <code>X</code> have signed value <math><mi>𝑎</mi></math> and divisor <math><mi>𝑐</mi><mo>=</mo><mi>𝐶</mi></math>. Define</p>
+    <math display="block">
+      <mi>𝐴</mi>
+      <mo>=</mo>
+      <mtext>abs</mtext>
+      <mrow>
+        <mo>(</mo>
+        <mi>𝑎</mi>
+        <mo>)</mo>
+      </mrow>
+      <mo>,</mo>
+      <mi>𝐵</mi>
+      <mo>=</mo>
+      <mtext>abs</mtext>
+      <mrow>
+        <mo>(</mo>
+        <mi>𝑐</mi>
+        <mo>)</mo>
+      </mrow>
+      <mo>,</mo>
+      <mi>𝑠</mi>
+      <mo>=</mo>
+      <mtext>sign</mtext>
+      <mrow>
+        <mo>(</mo>
+        <mi>𝑎</mi>
+        <mo>)</mo>
+      </mrow>
+      <mspace width="0.2222em"/>
+      <mtext>sign</mtext>
+      <mrow>
+        <mo>(</mo>
+        <mi>𝑐</mi>
+        <mo>)</mo>
+      </mrow>
+      <mi>.</mi>
+    </math>
+    <p>Then <math><mfrac><mi>𝑎</mi><mi>𝑐</mi></mfrac><mo>=</mo><mi>𝑠</mi><mrow><mo>(</mo><mfrac><mi>𝐴</mi><mi>𝐵</mi></mfrac><mo>)</mo></mrow></math>. Under <math><mi>𝑁</mi><mo>−</mo><mn>1</mn><mo>≤</mo><mi>𝑝</mi></math>, both <math><mi>𝐴</mi></math> and <math><mi>𝐵</mi></math> are at most <math><msup><mn>2</mn><mrow><mi>𝑁</mi><mo lspace="0em" rspace="0em">−</mo><mn>1</mn></mrow></msup><mo>≤</mo><msup><mn>2</mn><mi>𝑝</mi></msup></math>, so <code>sitofp</code> and the FP constant are exact. By the lemma,</p>
+    <math display="block">
+      <msub>
+        <mi>𝑅</mi>
+        <mi>𝑝</mi>
+      </msub>
+      <mrow>
+        <mo>(</mo>
+        <mfrac>
+          <mi>𝐴</mi>
+          <mi>𝐵</mi>
+        </mfrac>
+        <mo>)</mo>
+      </mrow>
+      <mo>∈</mo>
+      <mrow>
+        <mo>[</mo>
+        <mrow>
+          <mi>𝑞</mi>
+          <mo>,</mo>
+          <mi>𝑞</mi>
+          <mo>+</mo>
+          <mn>1</mn>
+        </mrow>
+        <mo>)</mo>
+      </mrow>
+      <mo>,</mo>
+      <mi>𝑞</mi>
+      <mo>=</mo>
+      <mtext>floor</mtext>
+      <mrow>
+        <mo>(</mo>
+        <mfrac>
+          <mi>𝐴</mi>
+          <mi>𝐵</mi>
+        </mfrac>
+        <mo>)</mo>
+      </mrow>
+      <mi>.</mi>
+    </math>
+    <p>Round-to-nearest-even is symmetric, so <math><msub><mi>𝑅</mi><mi>𝑝</mi></msub><mrow><mo>(</mo><mrow><mo>−</mo><mi>𝑧</mi></mrow><mo>)</mo></mrow><mo>=</mo><mo form="prefix">−</mo><msub><mi>𝑅</mi><mi>𝑝</mi></msub><mrow><mo>(</mo><mi>𝑧</mi><mo>)</mo></mrow></math>. Therefore the FP path produces <math><mi>𝑠</mi><msub><mi>𝑅</mi><mi>𝑝</mi></msub><mrow><mo>(</mo><mfrac><mi>𝐴</mi><mi>𝐵</mi></mfrac><mo>)</mo></mrow></math> before <code>fptosi</code>. Truncation toward zero gives</p>
+    <math display="block">
+      <mtext>fptosi</mtext>
+      <mrow>
+        <mo>(</mo>
+        <mrow>
+          <mi>𝑠</mi>
+          <msub>
+            <mi>𝑅</mi>
+            <mi>𝑝</mi>
+          </msub>
+          <mrow>
+            <mo>(</mo>
+            <mfrac>
+              <mi>𝐴</mi>
+              <mi>𝐵</mi>
+            </mfrac>
+            <mo>)</mo>
+          </mrow>
+        </mrow>
+        <mo>)</mo>
+      </mrow>
+      <mo>=</mo>
+      <mi>𝑠</mi>
+      <mi>𝑞</mi>
+      <mo>=</mo>
+      <mtext>sdiv</mtext>
+      <mrow>
+        <mo>(</mo>
+        <mrow>
+          <mi>𝑎</mi>
+          <mo>,</mo>
+          <mi>𝑐</mi>
+        </mrow>
+        <mo>)</mo>
+      </mrow>
+      <mo rspace="0em">,</mo>
+    </math>
+    <p>provided the integer division is defined. The only signed overflow case is <math><mfrac><mtext>INT_MIN</mtext><mrow><mo>−</mo><mn>1</mn></mrow></mfrac></math>, which is why <code>C == -1</code> needs the extra proof obligation.</p>
+    <p>The unsigned proof is the same lemma with <math><mi>𝐴</mi><mo>=</mo><mi>𝑋</mi></math>, <math><mi>𝐵</mi><mo>=</mo><mi>𝐶</mi></math>, and <math><mi>𝑁</mi><mo>≤</mo><mi>𝑝</mi></math>.</p>
+  </body>
+</html>
